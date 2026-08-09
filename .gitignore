@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+App/build/
+App/DiskGraph.xcodeproj/
+*.xcuserdatad
+.DS_Store

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>DiskGraph</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>An independent reimplementation. Not affiliated with Desairem or Disk Graph.</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+
+	<!-- A folder is the document type, so each scan opens in its own window. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Folder</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.directory</string>
+				<string>public.folder</string>
+			</array>
+			<key>NSDocumentClass</key>
+			<string>DiskGraphUI.GraphDocument</string>
+		</dict>
+	</array>
+
+	<!-- Shown by macOS when the app first touches each protected location. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>DiskGraph needs access to show this folder's contents in the graph.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>DiskGraph needs access to show this folder's contents in the graph.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>DiskGraph needs access to show this folder's contents in the graph.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>DiskGraph needs access to measure files on removable volumes.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>DiskGraph needs access to measure files on network volumes.</string>
+	<key>NSFileProviderDomainUsageDescription</key>
+	<string>DiskGraph needs access to measure files stored by file providers.</string>
+</dict>
+</plist>

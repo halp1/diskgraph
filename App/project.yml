@@ -1,0 +1,71 @@
+# Regenerate with: xcodegen generate --spec App/project.yml
+#
+# The app target is deliberately thin: it owns the bundle, the Info.plist and the Metal
+# shader (SwiftPM will not compile .metal files, so Xcode does it here and produces
+# default.metallib). All behaviour lives in the Swift package next door.
+name: DiskGraph
+options:
+  bundleIdPrefix: local.diskgraph
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.38"
+
+packages:
+  DiskGraph:
+    path: ..
+
+targets:
+  DiskGraph:
+    type: application
+    platform: macOS
+    sources:
+      - path: DiskGraph
+      # Same file the package ships as a runtime-compilable resource — one source of
+      # truth for the shader.
+      - path: ../Sources/DiskGraphRender/Shaders/Graph.metal
+        group: Shaders
+    dependencies:
+      - package: DiskGraph
+        product: DiskGraphUI
+    settings:
+      base:
+        PRODUCT_NAME: DiskGraph
+        PRODUCT_BUNDLE_IDENTIFIER: local.diskgraph.DiskGraph
+        INFOPLIST_FILE: DiskGraph/Info.plist
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        # Unsandboxed by design: the app measures whatever the user points it at and
+        # relies on Full Disk Access rather than per-folder bookmarks.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        # Ad-hoc signing keeps local builds runnable. Note that Full Disk Access is
+        # granted per binary, so re-granting is needed after a rebuild changes the hash.
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_REQUIRED: YES
+        CODE_SIGNING_ALLOWED: YES
+        DEVELOPMENT_TEAM: ""
+        COMBINE_HIDPI_IMAGES: YES
+        ALWAYS_SEARCH_USER_PATHS: NO
+        CLANG_ENABLE_OBJC_ARC: YES
+        MTL_FAST_MATH: YES
+      configs:
+        debug:
+          MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        release:
+          MTL_ENABLE_DEBUG_INFO: NO
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+
+schemes:
+  DiskGraph:
+    build:
+      targets:
+        DiskGraph: all
+    run:
+      config: Debug
+    archive:
+      config: Release

@@ -117,6 +117,14 @@ volumes are slices of one disk, and counting only one would under-report enormou
 external drives and network mounts are not. `autofs` mount points such as `/net` and
 `/home` are always skipped — they block waiting on a network mount.
 
+**Progress needs a denominator.** Nothing can know a tree's size without walking it, so the
+percentage has to come from outside the walk. In order of preference: the total this same
+folder came to on a previous scan (remembered by `ScanHistory`), else the used bytes of its
+volume from `statfs`. With neither, progress falls back to the share of discovered
+directories finished — which barely moves on a depth-first walk, because the queue stays
+short, so `ScanProgress.isEstimateMeaningful` is false and the UI shows an indeterminate bar
+rather than a number it cannot stand behind.
+
 **What no path walker can see.** APFS clones share blocks copy-on-write, and both paths
 report their full size. A whole-volume total therefore reads somewhat higher than the
 container's real usage — about 4 % on this machine. `du` has the same blind spot. Snapshots

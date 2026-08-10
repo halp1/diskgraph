@@ -30,18 +30,50 @@ public struct ScanOptions: Sendable {
     public var descendIntoPackages = true
     public var threadCount: Int = max(1, ProcessInfo.processInfo.activeProcessorCount)
 
+    /// Denominator for the progress estimate, in allocated bytes.
+    ///
+    /// Nothing can know a tree's size without walking it, so progress needs an outside
+    /// guess. Best is the total this same folder came to last time; failing that, the used
+    /// bytes of its volume. With neither, progress falls back to the share of discovered
+    /// directories finished — which barely moves on a depth-first walk, because the queue
+    /// stays short, so it is a last resort rather than the default.
+    public var expectedTotalBytes: Int64?
+
     public init() {}
 }
 
 public struct ScanProgress: Sendable {
     public var nodesScanned: Int
     public var bytesScanned: Int64
-    public var currentPath: String
+    /// Directories finished, and still waiting in the queue.
+    public var directoriesScanned: Int
+    public var directoriesPending: Int
+    /// The top-level folder under the scan root currently being worked on. Changes a
+    /// handful of times over a whole scan, unlike the full path, which changes hundreds of
+    /// times a second and just flickers.
+    public var currentTopLevel: String
+    /// 0…1. Estimated, and guaranteed never to go backwards.
+    ///
+    /// Bytes seen against `ScanOptions.expectedTotalBytes` when that is available. See
+    /// there for why the alternative is poor.
+    public var fractionComplete: Double
+    /// False while the estimate has no real denominator, so the UI can stay indeterminate
+    /// instead of showing a number it cannot stand behind.
+    public var isEstimateMeaningful: Bool
 
-    public init(nodesScanned: Int = 0, bytesScanned: Int64 = 0, currentPath: String = "") {
+    public init(
+        nodesScanned: Int = 0, bytesScanned: Int64 = 0,
+        directoriesScanned: Int = 0, directoriesPending: Int = 0,
+        currentTopLevel: String = "", fractionComplete: Double = 0,
+        isEstimateMeaningful: Bool = false
+    ) {
         self.nodesScanned = nodesScanned
         self.bytesScanned = bytesScanned
-        self.currentPath = currentPath
+        self.directoriesScanned = directoriesScanned
+        self.directoriesPending = directoriesPending
+        self.currentTopLevel = currentTopLevel
+        self.fractionComplete = fractionComplete
+        self.isEstimateMeaningful = isEstimateMeaningful
     }
 }
 
@@ -99,6 +131,7 @@ public final class DirectoryScanner {
             options: options,
             rootDevice: rootStat.st_dev,
             volumeMap: VolumeMap(rootPath: root, scope: options.volumeScope))
+        state.rootPath = root
         state.appendRoot(
             name: (root as NSString).lastPathComponent,
             isDirectory: rootIsDirectory,
@@ -171,7 +204,14 @@ final class ScanState: @unchecked Sendable {
     private let progressLock = NSLock()
     private var nodesScanned = 0
     private var bytesScanned: Int64 = 0
-    private var currentPath = ""
+    private var directoriesScanned = 0
+    private var directoriesQueued = 0
+    private var currentTopLevel = ""
+    /// Kept so the reported fraction never goes backwards when a directory turns out to
+    /// contain many more subdirectories than expected.
+    private var highestFraction: Double = 0
+    /// Prefix stripped to find the top-level folder being worked on.
+    var rootPath = ""
 
     init(options: ScanOptions, rootDevice: dev_t, volumeMap: VolumeMap) {
         self.options = options
@@ -298,6 +338,10 @@ final class ScanState: @unchecked Sendable {
     // MARK: Work queue
 
     func push(node: NodeID, path: String) {
+        progressLock.lock()
+        directoriesQueued += 1
+        progressLock.unlock()
+
         queueLock.lock()
         pending.append((node, path))
         queueLock.signal()
@@ -307,7 +351,7 @@ final class ScanState: @unchecked Sendable {
     func pushAll(_ items: [(node: NodeID, path: String)]) {
         guard !items.isEmpty else { return }
         progressLock.lock()
-        currentPath = items[items.count - 1].path
+        directoriesQueued += items.count
         progressLock.unlock()
 
         queueLock.lock()
@@ -318,6 +362,18 @@ final class ScanState: @unchecked Sendable {
 
     /// Blocks until work is available, or returns nil once every worker is idle and the
     /// stack is empty.
+    /// Notes which top-level folder a worker has moved on to. Called once per directory.
+    func noteProcessing(path: String) {
+        let relative = path.hasPrefix(rootPath)
+            ? String(path.dropFirst(rootPath.count)).drop(while: { $0 == "/" })
+            : Substring(path)
+        let top = String(relative.prefix(while: { $0 != "/" }))
+        guard !top.isEmpty else { return }
+        progressLock.lock()
+        if currentTopLevel != top { currentTopLevel = top }
+        progressLock.unlock()
+    }
+
     func nextTask() -> (node: NodeID, path: String)? {
         queueLock.lock()
         defer { queueLock.unlock() }
@@ -325,6 +381,9 @@ final class ScanState: @unchecked Sendable {
             if shutdown { return nil }
             if let task = pending.popLast() {
                 activeWorkers += 1
+                progressLock.lock()
+                directoriesQueued = max(0, directoriesQueued - 1)
+                progressLock.unlock()
                 return task
             }
             if activeWorkers == 0 {
@@ -337,6 +396,10 @@ final class ScanState: @unchecked Sendable {
     }
 
     func finishTask() {
+        progressLock.lock()
+        directoriesScanned += 1
+        progressLock.unlock()
+
         queueLock.lock()
         activeWorkers -= 1
         if activeWorkers == 0 && pending.isEmpty {
@@ -375,8 +438,26 @@ final class ScanState: @unchecked Sendable {
     var progressSnapshot: ScanProgress {
         progressLock.lock()
         defer { progressLock.unlock() }
+        let expected = options.expectedTotalBytes ?? 0
+        let estimate: Double
+        if expected > 0 {
+            estimate = min(Double(bytesScanned) / Double(expected), 0.99)
+        } else {
+            let known = directoriesScanned + directoriesQueued
+            estimate = known > 0 ? min(Double(directoriesScanned) / Double(known), 0.99) : 0
+        }
+        // Hold just short of complete while work remains, so the bar never sits at 100 %
+        // with the scan still running.
+        highestFraction = max(highestFraction, estimate)
+        let done = directoriesQueued == 0 && directoriesScanned > 0
         return ScanProgress(
-            nodesScanned: nodesScanned, bytesScanned: bytesScanned, currentPath: currentPath)
+            nodesScanned: nodesScanned,
+            bytesScanned: bytesScanned,
+            directoriesScanned: directoriesScanned,
+            directoriesPending: directoriesQueued,
+            currentTopLevel: currentTopLevel,
+            fractionComplete: done ? 1 : highestFraction,
+            isEstimateMeaningful: expected > 0)
     }
 }
 
@@ -428,6 +509,7 @@ private final class ScanWorker {
                 state.abort()
                 return
             }
+            state.noteProcessing(path: task.path)
             process(node: task.node, path: task.path)
             state.finishTask()
         }

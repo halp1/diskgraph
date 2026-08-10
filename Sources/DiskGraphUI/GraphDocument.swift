@@ -72,10 +72,11 @@ public final class GraphDocument: NSDocument {
         let cancellation = ScanCancellation()
         self.cancellation = cancellation
 
-        state = .scanning(ScanProgress(nodesScanned: 0, bytesScanned: 0, currentPath: url.path))
+        state = .scanning(ScanProgress())
 
         // Honour whatever the user set in Settings; these were previously ignored.
-        let scanOptions = SettingsWindowController.scanOptions()
+        var scanOptions = SettingsWindowController.scanOptions()
+        scanOptions.expectedTotalBytes = ScanHistory.expectedBytes(for: url.path)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
@@ -91,6 +92,8 @@ public final class GraphDocument: NSDocument {
                 }
                 DispatchQueue.main.async {
                     guard let self, self.cancellation === cancellation else { return }
+                    // Sharpen the next scan's progress estimate for this folder.
+                    ScanHistory.record(path: url.path, allocatedBytes: tree.allocatedSize[0])
                     self.state = .loaded(tree)
                 }
             } catch {

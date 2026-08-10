@@ -233,12 +233,16 @@ private func node(_ tree: FileTree, _ relativePath: String) -> NodeID? {
         let fixture = try Fixture()
         for i in 0 ..< 50 { try fixture.file("d\(i % 5)/f\(i).bin", bytes: 4096) }
 
-        let box = Locked(ScanProgress(nodesScanned: 0, bytesScanned: 0, currentPath: ""))
+        let box = Locked(ScanProgress())
         let tree = try DirectoryScanner().scan(rootPath: fixture.root.path) { box.value = $0 }
 
         // The final callback fires after the walk, so it must agree with the tree.
         #expect(box.value.nodesScanned == tree.count - 1)
         #expect(tree.fileCount[0] == 50)
+        // Nothing left queued means the estimate has to read as complete.
+        #expect(box.value.directoriesPending == 0)
+        #expect(box.value.fractionComplete == 1)
+        #expect(box.value.directoriesScanned == 6)   // the root plus d0…d4
     }
 }
 
@@ -286,5 +290,123 @@ private final class Locked<T>: @unchecked Sendable {
         let order = tree.sortedChildren(of: 0, mode: .logical).map { tree.name(of: $0) }
 
         #expect(order == ["large.bin", "medium.bin", "small.bin"])
+    }
+}
+
+@Suite struct ScanProgressTests {
+    /// The estimate has no total to divide by, so it is the share of *discovered*
+    /// directories finished. It must still be monotonic and land exactly on 1.
+    @Test func progressRisesMonotonicallyAndEndsComplete() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("diskgraph-progress-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for group in 0 ..< 12 {
+            for leaf in 0 ..< 6 {
+                let dir = root.appendingPathComponent("g\(group)/sub\(leaf)/deep")
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try Data(repeating: 0x41, count: 2048)
+                    .write(to: dir.appendingPathComponent("f.bin"))
+            }
+        }
+
+        let samples = Locked([Double]())
+        var options = ScanOptions()
+        options.threadCount = 2
+        let tree = try DirectoryScanner().scan(rootPath: root.path, options: options) { progress in
+            samples.value = samples.value + [progress.fractionComplete]
+        }
+
+        let observed = samples.value
+        #expect(!observed.isEmpty)
+        for (earlier, later) in zip(observed, observed.dropFirst()) {
+            #expect(later >= earlier, "progress went backwards: \(earlier) → \(later)")
+        }
+        #expect(observed.allSatisfy { $0 >= 0 && $0 <= 1 })
+        #expect(observed.last == 1)
+        #expect(tree.fileCount[0] == 72)
+    }
+
+    /// The top-level folder is what the overlay shows instead of the flickering full path.
+    @Test func reportsTheTopLevelFolderRatherThanTheFullPath() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("diskgraph-toplevel-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let deep = root.appendingPathComponent("Library/very/deeply/nested")
+        try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+        try Data(repeating: 0x41, count: 1024).write(to: deep.appendingPathComponent("f.bin"))
+
+        let seen = Locked(Set<String>())
+        _ = try DirectoryScanner().scan(rootPath: root.path) { progress in
+            if !progress.currentTopLevel.isEmpty {
+                seen.value = seen.value.union([progress.currentTopLevel])
+            }
+        }
+
+        // Only ever a single component, never a path.
+        for value in seen.value {
+            #expect(!value.contains("/"), "expected a folder name, got \(value)")
+        }
+    }
+}
+
+@Suite struct ProgressDenominatorTests {
+    private func makeTree(_ root: URL, files: Int, bytes: Int) throws {
+        for i in 0 ..< files {
+            let dir = root.appendingPathComponent("d\(i % 8)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data(repeating: 0x41, count: bytes)
+                .write(to: dir.appendingPathComponent("f\(i).bin"))
+        }
+    }
+
+    /// With a denominator the estimate tracks bytes seen. Without one it falls back to the
+    /// directory ratio, which on a depth-first walk barely moves — the queue stays short —
+    /// so the UI is told not to show a number.
+    @Test func reportsWhetherTheEstimateHasARealDenominator() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("diskgraph-denominator-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeTree(root, files: 200, bytes: 8192)
+
+        let withoutTotal = Locked(ScanProgress())
+        _ = try DirectoryScanner().scan(rootPath: root.path) { withoutTotal.value = $0 }
+        #expect(!withoutTotal.value.isEstimateMeaningful)
+
+        var options = ScanOptions()
+        options.expectedTotalBytes = 200 * 8192
+        let withTotal = Locked(ScanProgress())
+        _ = try DirectoryScanner().scan(rootPath: root.path, options: options) {
+            withTotal.value = $0
+        }
+        #expect(withTotal.value.isEstimateMeaningful)
+        #expect(withTotal.value.fractionComplete == 1)
+    }
+
+    /// A denominator that turns out to be far too large must not push the bar past 99 %
+    /// early, nor stop it landing on 1 at the end.
+    @Test func handlesAnOverEstimatedDenominator() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("diskgraph-over-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeTree(root, files: 40, bytes: 4096)
+
+        var options = ScanOptions()
+        options.expectedTotalBytes = 500_000_000_000   // as if the whole volume
+        let samples = Locked([Double]())
+        _ = try DirectoryScanner().scan(rootPath: root.path, options: options) {
+            samples.value = samples.value + [$0.fractionComplete]
+        }
+        let observed = samples.value
+        #expect(observed.allSatisfy { $0 >= 0 && $0 <= 1 })
+        #expect(observed.last == 1)
+    }
+
+    @Test func volumeUsedBytesIsAUsableFallback() throws {
+        let used = try #require(VolumeMap.usedBytes(ofVolumeContaining: "/"))
+        #expect(used > 0)
+        // Sanity: a boot volume in use is at least a gigabyte.
+        #expect(used > 1_000_000_000)
     }
 }

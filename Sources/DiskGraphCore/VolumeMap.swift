@@ -95,6 +95,20 @@ public struct VolumeMap: Sendable {
         excludedMountPoints.contains(path)
     }
 
+    /// Bytes in use on the volume holding `path`, or nil if it cannot be determined.
+    ///
+    /// Used as the denominator for scan progress. It is an over-estimate for anything
+    /// smaller than the whole volume, which is why a remembered total from a previous scan
+    /// of the same folder is preferred when there is one.
+    public static func usedBytes(ofVolumeContaining path: String) -> Int64? {
+        var info = statfs()
+        guard statfs(path, &info) == 0, info.f_bsize > 0 else { return nil }
+        let block = Int64(info.f_bsize)
+        let used = Int64(info.f_blocks) - Int64(info.f_bfree)
+        guard used > 0 else { return nil }
+        return used * block
+    }
+
     // MARK: - Mount table
 
     struct Mount {

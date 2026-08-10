@@ -21,6 +21,10 @@ targets:
     platform: macOS
     sources:
       - path: DiskGraph
+        excludes: ["AppIcon.icns"]
+      # Regenerate with: swift Tools/GenerateAppIcon.swift App/DiskGraph/AppIcon.icns
+      - path: DiskGraph/AppIcon.icns
+        buildPhase: resources
       # Same file the package ships as a runtime-compilable resource — one source of
       # truth for the shader.
       - path: ../Sources/DiskGraphRender/Shaders/Graph.metal

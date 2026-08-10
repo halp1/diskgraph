@@ -13,9 +13,14 @@ here — see [Clean-room boundary](#clean-room-boundary).
 swift test                                   # logic suites, no window server needed
 brew install xcodegen                        # once
 xcodegen generate --spec App/project.yml     # regenerates App/DiskGraph.xcodeproj
-xcodebuild -project App/DiskGraph.xcodeproj -scheme DiskGraph build
-open App/build/Build/Products/Debug/DiskGraph.app
+xcodebuild -project App/DiskGraph.xcodeproj -scheme DiskGraph \
+           -configuration Release -derivedDataPath App/build build
+open App/build/Build/Products/Release/DiskGraph.app
 ```
+
+Rebuild **both** configurations, or install the one you actually launch — a stale Release
+binary next to a fresh Debug one is an easy way to spend a while chasing a bug that is
+already fixed.
 
 Requires macOS 14+, Xcode 26, and the Metal toolchain
 (`xcodebuild -downloadComponent MetalToolchain`).
@@ -24,6 +29,20 @@ The app is **not sandboxed** and wants **Full Disk Access** so it can measure `~
 and the system volume; it prompts on first launch and deep-links to the right settings
 pane. Access is granted per binary, so a rebuild changes the hash and needs re-granting —
 use a stable signing identity if that gets tedious.
+
+## App icon
+
+Generated, not drawn by hand, and original artwork:
+
+```bash
+swift Tools/GenerateAppIcon.swift App/DiskGraph/AppIcon.icns
+```
+
+The mark is a two-ring sunburst laid out with the app's *own* rules — hue = 115° − θ,
+largest wedge starting at three o'clock — so the icon is a small picture of what the app
+actually produces. Wedge proportions are hand-chosen to look like real disk usage: one
+dominant folder, a few mid-sized, a tail of small ones. `Info.plist` points at it with
+`CFBundleIconFile`; there is no asset catalogue.
 
 ## Layout
 

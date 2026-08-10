@@ -374,8 +374,8 @@ public final class GraphView: NSView {
         }
         overlay.centerPoint = CGPoint(x: bounds.midX, y: bounds.midY)
         let node = hoveredNode ?? root
-        overlay.centerText = SizeFormatter.string(
-            tree.size(of: node, mode: options.sizeMode), mode: options.sizeMode)
+        overlay.centerText = CellDescription.centerLabel(
+            for: node, tree: tree, sizeMode: options.sizeMode)
     }
 
     // MARK: - Mouse
@@ -433,16 +433,9 @@ public final class GraphView: NSView {
         renderer.uniforms.highlightedCell = index.map(UInt32.init) ?? GraphUniforms.noHighlight
 
         if let hit {
-            let name = hit.cellFlags.contains(.merged)
-                ? "Smaller items"
-                : tree.name(of: hit.node)
-            let size = hit.cellFlags.contains(.merged)
-                ? 0
-                : tree.size(of: hit.node, mode: options.sizeMode)
+            let text = CellDescription.tooltip(for: hit, tree: tree, sizeMode: options.sizeMode)
             overlay.tooltip = GraphOverlayView.Tooltip(
-                name: name,
-                detail: SizeFormatter.string(size, mode: options.sizeMode),
-                anchor: point)
+                name: text.name, detail: text.detail, anchor: point)
         } else {
             overlay.tooltip = nil
         }

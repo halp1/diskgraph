@@ -441,3 +441,36 @@ private let viewSize = SIMD2<Float>(940, 800)
         }
     }
 }
+
+@Suite struct MergedCellTests {
+    /// The gray cell stands in for siblings too small to draw, so it has to report their
+    /// combined size — it previously read as zero because a merged cell borrows its
+    /// parent's node id and has nothing of its own to look up in the tree.
+    @Test(arguments: [GraphType.pieChart, GraphType.treeMap])
+    func mergedCellsReportTheGroupTheyStandFor(graphType: GraphType) throws {
+        let fixture = try Fixture()
+        try fixture.file("big.bin", bytes: 20_000_000)
+        for i in 0 ..< 150 { try fixture.file("tiny\(i).bin", bytes: 1024) }
+        let tree = try DirectoryScanner().scan(rootPath: fixture.root.path)
+
+        var options = GraphOptions()
+        options.sizeMode = .logical
+        options.graphType = graphType
+        // The pie merges on arc length and the tree map on area, so pick a threshold
+        // comfortably past both.
+        options.mergeThreshold = 20
+        let cells = GraphLayoutEngine()
+            .layout(tree: tree, root: 0, options: options, viewSize: viewSize).cells
+
+        let merged = cells.filter { $0.cellFlags.contains(.merged) }
+        #expect(merged.count == 1)
+        let group = try #require(merged.first)
+        #expect(group.mergedCount > 1)
+        #expect(group.mergedSize > 0)
+        // The group accounts for exactly what the drawn cells leave out.
+        let drawn = cells
+            .filter { !$0.cellFlags.contains(.merged) && $0.node != 0 }
+            .reduce(Int64(0)) { $0 + tree.logicalSize[Int($1.node)] }
+        #expect(group.mergedSize == tree.logicalSize[0] - drawn)
+    }
+}

@@ -74,8 +74,8 @@ public final class GraphDocument: NSDocument {
 
         state = .scanning(ScanProgress(nodesScanned: 0, bytesScanned: 0, currentPath: url.path))
 
-        var scanOptions = ScanOptions()
-        scanOptions.descendIntoPackages = true
+        // Honour whatever the user set in Settings; these were previously ignored.
+        let scanOptions = SettingsWindowController.scanOptions()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {

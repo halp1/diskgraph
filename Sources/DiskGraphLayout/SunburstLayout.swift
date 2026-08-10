@@ -66,6 +66,7 @@ public struct SunburstLayout {
             let children = tree.sortedChildren(of: frame.node, mode: options.sizeMode)
             var angle = frame.start
             var mergedSize: Int64 = 0
+            var mergedCount = 0
 
             for child in children {
                 let size = tree.size(of: child, mode: options.sizeMode)
@@ -76,6 +77,7 @@ public struct SunburstLayout {
                 // too. Sum the tail into the gray cell and keep going.
                 if sweep < minSweep {
                     mergedSize += size
+                    mergedCount += 1
                     continue
                 }
 
@@ -114,7 +116,9 @@ public struct SunburstLayout {
                     pieAlpha: 1,
                     rectAlpha: 0,
                     nodeID: frame.node,
-                    flags: [.merged]))
+                    flags: [.merged],
+                    mergedCount: mergedCount,
+                    mergedSize: mergedSize))
                 levels.append(level)
                 deepestLevel = max(deepestLevel, level)
             }

@@ -1,4 +1,5 @@
 import AppKit
+import DiskGraphCore
 
 /// A small settings window. The reference app's predicate-based exclude filter is out of
 /// scope, so this covers the defaults that apply to new scans plus the Full Disk Access
@@ -11,12 +12,31 @@ final class SettingsWindowController: NSWindowController {
         checkboxWithTitle: "Look inside packages such as .app bundles", target: nil, action: nil)
     private let hardLinkCheckbox = NSButton(
         checkboxWithTitle: "Count hard-linked files only once", target: nil, action: nil)
-    private let crossDeviceCheckbox = NSButton(
-        checkboxWithTitle: "Follow mount points onto other volumes", target: nil, action: nil)
+    private let scopePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
 
     static let descendIntoPackagesKey = "DescendIntoPackages"
     static let countHardLinksOnceKey = "CountHardLinksOnce"
-    static let crossDeviceBoundariesKey = "CrossDeviceBoundaries"
+    static let volumeScopeKey = "VolumeScope"
+
+    /// Scan options as the user has configured them. Applied to every new scan.
+    static func scanOptions() -> ScanOptions {
+        registerDefaults()
+        let defaults = UserDefaults.standard
+        var options = ScanOptions()
+        options.descendIntoPackages = defaults.bool(forKey: descendIntoPackagesKey)
+        options.countHardLinksOnce = defaults.bool(forKey: countHardLinksOnceKey)
+        options.volumeScope = defaults.string(forKey: volumeScopeKey)
+            .flatMap(VolumeScope.init(rawValue:)) ?? .sameDisk
+        return options
+    }
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [
+            descendIntoPackagesKey: true,
+            countHardLinksOnceKey: true,
+            volumeScopeKey: VolumeScope.sameDisk.rawValue,
+        ])
+    }
 
     private init() {
         let window = NSWindow(
@@ -33,20 +53,26 @@ final class SettingsWindowController: NSWindowController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private func buildContent() {
+        Self.registerDefaults()
         let defaults = UserDefaults.standard
-        defaults.register(defaults: [
-            Self.descendIntoPackagesKey: true,
-            Self.countHardLinksOnceKey: true,
-            Self.crossDeviceBoundariesKey: false,
-        ])
 
-        for box in [packagesCheckbox, hardLinkCheckbox, crossDeviceCheckbox] {
+        for box in [packagesCheckbox, hardLinkCheckbox] {
             box.target = self
             box.action = #selector(checkboxChanged)
         }
         packagesCheckbox.state = defaults.bool(forKey: Self.descendIntoPackagesKey) ? .on : .off
         hardLinkCheckbox.state = defaults.bool(forKey: Self.countHardLinksOnceKey) ? .on : .off
-        crossDeviceCheckbox.state = defaults.bool(forKey: Self.crossDeviceBoundariesKey) ? .on : .off
+
+        for (index, scope) in VolumeScope.allCases.enumerated() {
+            scopePopUp.addItem(withTitle: scope.localizedName)
+            scopePopUp.item(at: index)?.representedObject = scope
+        }
+        let current = defaults.string(forKey: Self.volumeScopeKey)
+            .flatMap(VolumeScope.init(rawValue:)) ?? .sameDisk
+        scopePopUp.selectItem(at: VolumeScope.allCases.firstIndex(of: current) ?? 1)
+        scopePopUp.target = self
+        scopePopUp.action = #selector(checkboxChanged)
+        scopePopUp.controlSize = .small
 
         accessLabel.font = .systemFont(ofSize: 11)
         let openAccess = NSButton(
@@ -58,9 +84,15 @@ final class SettingsWindowController: NSWindowController {
         accessRow.orientation = .horizontal
         accessRow.spacing = 8
 
+        let scopeRow = NSStackView(views: [
+            NSTextField(labelWithString: "Include:"), scopePopUp,
+        ])
+        scopeRow.orientation = .horizontal
+        scopeRow.spacing = 8
+
         let stack = NSStackView(views: [
             sectionTitle("Scanning"),
-            packagesCheckbox, hardLinkCheckbox, crossDeviceCheckbox,
+            packagesCheckbox, hardLinkCheckbox, scopeRow,
             NSBox.separator(),
             sectionTitle("Permissions"),
             accessRow,
@@ -106,7 +138,9 @@ final class SettingsWindowController: NSWindowController {
         let defaults = UserDefaults.standard
         defaults.set(packagesCheckbox.state == .on, forKey: Self.descendIntoPackagesKey)
         defaults.set(hardLinkCheckbox.state == .on, forKey: Self.countHardLinksOnceKey)
-        defaults.set(crossDeviceCheckbox.state == .on, forKey: Self.crossDeviceBoundariesKey)
+        if let scope = scopePopUp.selectedItem?.representedObject as? VolumeScope {
+            defaults.set(scope.rawValue, forKey: Self.volumeScopeKey)
+        }
     }
 
     @objc private func openAccessSettings() {

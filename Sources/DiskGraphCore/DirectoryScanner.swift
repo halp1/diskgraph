@@ -10,15 +10,20 @@ private let packageExtensions: Set<String> = [
 ]
 
 public struct ScanOptions: Sendable {
-    /// Stay on the volume the root lives on. Also avoids macOS firmlink cycles under
-    /// `/System/Volumes/Data`.
-    public var crossDeviceBoundaries = false
+    /// How far out of the starting volume the walk may go. See `VolumeScope`.
+    public var volumeScope: VolumeScope = .sameDisk
     /// Count a multiply-linked inode's bytes only the first time it is seen, like `du`.
     ///
-    /// Off by default to match the reference app: scanning `/Applications` there reports
-    /// 22.52 GB, which is exactly this scanner's total with dedup disabled (`du` reports
-    /// 22.23 GB with it enabled). Every path is charged for what it claims.
-    public var countHardLinksOnce = false
+    /// On by default, which is a deliberate *departure* from the reference app. Scanning
+    /// `/Applications` there reports 22.52 GB — exactly this scanner's total with dedup
+    /// off — whereas `du` reports 22.23 GB, which is what you would actually reclaim.
+    /// Charging every path for bytes it shares makes whole-disk totals visibly too big,
+    /// so this favours the truthful number and leaves the other available.
+    ///
+    /// Note that neither setting can see APFS clones: two files that share blocks
+    /// copy-on-write both report their full size, so a whole-volume total still reads
+    /// higher than the container's real usage. `du` has the same blind spot.
+    public var countHardLinksOnce = true
     /// Walk into `.app` and friends. On by default — their contents count towards the
     /// total. Whether the *graph* subdivides a package is a separate, display-time
     /// decision (see `GraphOptions`), which is what File ▸ Show Package Contents flips.
@@ -90,7 +95,10 @@ public final class DirectoryScanner {
         }
         let rootIsDirectory = (rootStat.st_mode & S_IFMT) == S_IFDIR
 
-        let state = ScanState(options: options, rootDevice: rootStat.st_dev)
+        let state = ScanState(
+            options: options,
+            rootDevice: rootStat.st_dev,
+            volumeMap: VolumeMap(rootPath: root, scope: options.volumeScope))
         state.appendRoot(
             name: (root as NSString).lastPathComponent,
             isDirectory: rootIsDirectory,
@@ -100,6 +108,7 @@ public final class DirectoryScanner {
             modificationTime: Int64(rootStat.st_mtimespec.tv_sec))
 
         if rootIsDirectory {
+            _ = state.claimDirectory(device: Int32(rootStat.st_dev), fileID: rootStat.st_ino)
             state.push(node: 0, path: root)
             runWorkers(state: state, options: options, cancellation: cancellation, progress: progress)
         }
@@ -137,6 +146,7 @@ public final class DirectoryScanner {
 final class ScanState: @unchecked Sendable {
     let options: ScanOptions
     let rootDevice: dev_t
+    let volumeMap: VolumeMap
 
     private let treeLock = NSLock()
     var storage = FileTreeStorage()
@@ -147,8 +157,13 @@ final class ScanState: @unchecked Sendable {
     private var activeWorkers = 0
     private var shutdown = false
 
-    private let linkLock = NSLock()
-    private var seenHardLinks = Set<UInt64>()
+    private let identityLock = NSLock()
+    private var seenHardLinks = Set<FileIdentity>()
+    /// Every directory already claimed by some worker. This, not the device id, is what
+    /// stops firmlinked directories being counted twice — on an APFS system volume group
+    /// `/Users` and `/System/Volumes/Data/Users` report the *same* device, so a device
+    /// check cannot tell them apart, but they share an inode.
+    private var claimedDirectories = Set<FileIdentity>()
 
     /// Updated once per directory, so the extra lock costs nothing measurable. It has to
     /// be a real lock rather than a relaxed read: `currentPath` is a `String`, and racing
@@ -158,9 +173,10 @@ final class ScanState: @unchecked Sendable {
     private var bytesScanned: Int64 = 0
     private var currentPath = ""
 
-    init(options: ScanOptions, rootDevice: dev_t) {
+    init(options: ScanOptions, rootDevice: dev_t, volumeMap: VolumeMap) {
         self.options = options
         self.rootDevice = rootDevice
+        self.volumeMap = volumeMap
     }
 
     // MARK: Tree building
@@ -341,10 +357,19 @@ final class ScanState: @unchecked Sendable {
 
     /// True if this inode's bytes have already been counted.
     func isDuplicateHardLink(device: Int32, fileID: UInt64) -> Bool {
-        let key = UInt64(bitPattern: Int64(device)) &* 0x9E37_79B9_7F4A_7C15 ^ fileID
-        linkLock.lock()
-        defer { linkLock.unlock() }
+        let key = FileIdentity(device: device, fileID: fileID)
+        identityLock.lock()
+        defer { identityLock.unlock() }
         return !seenHardLinks.insert(key).inserted
+    }
+
+    /// Claims a directory for scanning. Returns false if some other path already reached
+    /// the same inode, in which case this path must not be walked again.
+    func claimDirectory(device: Int32, fileID: UInt64) -> Bool {
+        let key = FileIdentity(device: device, fileID: fileID)
+        identityLock.lock()
+        defer { identityLock.unlock() }
+        return claimedDirectories.insert(key).inserted
     }
 
     var progressSnapshot: ScanProgress {
@@ -355,10 +380,19 @@ final class ScanState: @unchecked Sendable {
     }
 }
 
+/// Exact (device, inode) pair. Hashing the two into one integer risked a collision
+/// silently dropping a whole subtree, so keep them separate.
+struct FileIdentity: Hashable {
+    var device: Int32
+    var fileID: UInt64
+}
+
 /// A directory entry accumulated in thread-local scratch before being published.
 struct ScannedEntry {
     var nameStart: Int
     var nameLength: Int
+    var device: Int32
+    var fileID: UInt64
     var flags: NodeFlags
     var logicalSize: Int64
     var allocatedSize: Int64
@@ -432,15 +466,25 @@ private final class ScanWorker {
         guard !subdirectories.isEmpty else { return }
         var base = path
         if base.hasSuffix("/") { base.removeLast() }
-        let tasks = subdirectories.map { sub in
-            (node: first + NodeID(sub.index), path: base + "/" + sub.name)
+
+        var tasks: [(node: NodeID, path: String)] = []
+        tasks.reserveCapacity(subdirectories.count)
+        for sub in subdirectories {
+            let childPath = base + "/" + sub.name
+            // Mount points the volume map ruled out: other disks, network shares, autofs
+            // triggers that would block, and the Data volume's duplicate view of `/`.
+            if state.volumeMap.excludes(childPath) { continue }
+            let entry = entries[sub.index]
+            // Two paths can reach one directory — firmlinks do it all over the boot volume.
+            // Whichever gets here first scans it; the other is left as an empty node.
+            guard state.claimDirectory(device: entry.device, fileID: entry.fileID) else { continue }
+            tasks.append((node: first + NodeID(sub.index), path: childPath))
         }
         state.pushAll(tasks)
     }
 
     private func collect(_ entry: BulkEntry) {
         guard entry.error == 0, entry.name.count > 0 else { return }
-        if !options.crossDeviceBoundaries && dev_t(entry.deviceID) != state.rootDevice { return }
 
         var flags = NodeFlags()
         var logical = entry.logicalSize
@@ -485,6 +529,8 @@ private final class ScanWorker {
         entries.append(ScannedEntry(
             nameStart: nameStart,
             nameLength: nameLength,
+            device: entry.deviceID,
+            fileID: entry.fileID,
             flags: flags,
             logicalSize: logical,
             allocatedSize: allocated,

@@ -90,24 +90,23 @@ private func node(_ tree: FileTree, _ relativePath: String) -> NodeID? {
         }
     }
 
-    @Test func countsHardLinksPerPathByDefaultAndDeduplicatesOnRequest() throws {
+    @Test func deduplicatesHardLinksByDefaultAndCountsPerPathOnRequest() throws {
         let fixture = try Fixture()
         let original = try fixture.file("original.bin", bytes: 8192)
         try fixture.hardLink("copy.bin", to: original)
 
-        // Default matches the reference app, which charges every path for its bytes.
-        let perPath = try scan(fixture.root)
-        #expect(perPath.logicalSize[0] == 16384)
-
-        var deduplicating = ScanOptions()
-        deduplicating.countHardLinksOnce = true
-        let deduplicated = try scan(fixture.root, deduplicating)
+        // Default counts the inode once, like `du`, so the total is what you would
+        // actually reclaim. The reference app instead reports 16384 here.
+        let deduplicated = try scan(fixture.root)
         #expect(deduplicated.logicalSize[0] == 8192)
-        // The second link is flagged and contributes nothing.
         let duplicates = deduplicated.indices.filter {
             deduplicated.nodeFlags(NodeID($0)).contains(.hardLinkDuplicate)
         }
         #expect(duplicates.count == 1)
+
+        var perPath = ScanOptions()
+        perPath.countHardLinksOnce = false
+        #expect(try scan(fixture.root, perPath).logicalSize[0] == 16384)
     }
 
     @Test func doesNotFollowSymbolicLinks() throws {

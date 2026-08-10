@@ -7,8 +7,9 @@ import simd
 /// These pin the numbers that `Graph.metal` assumes.
 @Suite struct CellInstanceLayoutTests {
     @Test func instanceStrideMatchesTheShaderDeclaration() {
-        // 52 bytes of fields, rounded up to the 16-byte alignment SIMD4<Float> imposes.
-        #expect(MemoryLayout<CellInstance>.size == 52)
+        // The merged-group fields sit in what was dead tail padding, so the stride is
+        // unchanged at the 64 bytes SIMD4<Float>'s 16-byte alignment already forced.
+        #expect(MemoryLayout<CellInstance>.size == 64)
         #expect(MemoryLayout<CellInstance>.stride == 64)
         #expect(MemoryLayout<CellInstance>.alignment == 16)
     }
@@ -21,6 +22,8 @@ import simd
         #expect(MemoryLayout<CellInstance>.offset(of: \.rectAlpha) == 40)
         #expect(MemoryLayout<CellInstance>.offset(of: \.nodeID) == 44)
         #expect(MemoryLayout<CellInstance>.offset(of: \.flags) == 48)
+        #expect(MemoryLayout<CellInstance>.offset(of: \.mergedCount) == 52)
+        #expect(MemoryLayout<CellInstance>.offset(of: \.mergedSize) == 56)
     }
 
     @Test func flagBitsMatchTheShaderConstants() {

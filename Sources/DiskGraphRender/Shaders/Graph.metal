@@ -12,6 +12,8 @@ struct CellInstance {
     float  rectAlpha;
     uint   nodeID;
     uint   flags;
+    uint   mergedCount;   // unused by the shader; present so the stride matches Swift
+    uint2  mergedSize;    // an Int64 on the Swift side
 };
 
 struct GraphUniforms {

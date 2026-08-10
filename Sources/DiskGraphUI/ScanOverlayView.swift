@@ -18,7 +18,6 @@ final class ScanOverlayView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(calibratedWhite: 0.933, alpha: 1).cgColor
 
         spinner.style = .spinning
         spinner.controlSize = .regular
@@ -50,6 +49,19 @@ final class ScanOverlayView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// A CGColor is a fixed value, so a layer background does not follow the appearance
+    /// the way an NSColor would. Painting it in `draw` keeps it in step — the earlier
+    /// hardcoded light grey left white system text on a near-white field in dark mode.
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 
     func show(_ mode: Mode) {
         switch mode {

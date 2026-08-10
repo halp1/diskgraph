@@ -69,7 +69,7 @@ same size and compare like-for-like screen grabs.
 | Disc radius | `hole + rings × width`, capped at 0.96 | The disc *grows with depth* — a folder of packages draws a thin donut, a nested tree fills the view |
 | Saturation / value | flat with depth | A fourth-ring cell is exactly as saturated as a first-ring one; all colour variation is angular |
 | Background (dark) | `#424242` | Sampled from the reference window |
-| Hard links | counted per path, **not** deduplicated | Reference reports 22.52 GB for `/Applications`; this scanner matches exactly with dedup off (`du` says 22.23 GB with it on) |
+| Hard links | **deduplicated** (a deliberate departure) | The reference reports 22.52 GB for `/Applications`, which this scanner matches exactly with dedup *off*. `du` says 22.23 GB with it on, and that is what you would actually reclaim, so dedup is the default here. Switchable in Settings. |
 | Packages | one cell, contents still counted | Why `/Applications` is a single ring in both apps despite every bundle being several levels deep |
 | Default layout | `Stack` | Read out of the reference app's own View ▸ Layout menu |
 | Defaults | Pie Chart, Size on Disk, Hue Wheel, Show Available Space on | Read out of the running app's menu checkmarks |
@@ -92,6 +92,36 @@ and its contents depend on the graph type — `Graph Levels` for the pie; `Direc
 Border`, `Layout` and the two tree-map toggles for the tree map. The continuous values are
 `Decrease`/`Increase`/`Reset` triplets, as in the original.
 
+## Getting the numbers right
+
+Two macOS-specific traps, both of which produced visibly wrong totals before they were
+fixed. They are worth knowing about before touching the scanner.
+
+**Firmlinks make the boot volume look doubled.** On an APFS system volume group `/Users`,
+`/Applications`, `/Library`, `/private` and a dozen more (see `/usr/share/firmlinks`)
+appear under `/` but live on the Data volume — which is *also* mounted at
+`/System/Volumes/Data`. Every one of them is reachable by two paths, and `stat` reports the
+**same device id** for both, so the usual "don't cross device boundaries" check cannot tell
+them apart. A naive walk of `/` counts most of the disk twice.
+
+Two things prevent it. `VolumeMap` excludes `/System/Volumes/Data` when it is not the scan
+root, since everything under it is reachable through the firmlinks. And every directory is
+claimed by exact `(device, inode)` before being walked, so any second path to it — firmlink,
+bind mount, `/Volumes/Macintosh HD` — finds it already taken. `du` has no such protection:
+`du -sk /System` reports 540 GB on this machine because it walks straight into the Data
+volume, against 70 GB for the System volume's actual content.
+
+**Volume scope.** `VolumeScope` decides how far a scan may wander, defaulting to
+`.sameDisk`: other volumes of the same APFS container are included (the System and Data
+volumes are slices of one disk, and counting only one would under-report enormously) while
+external drives and network mounts are not. `autofs` mount points such as `/net` and
+`/home` are always skipped — they block waiting on a network mount.
+
+**What no path walker can see.** APFS clones share blocks copy-on-write, and both paths
+report their full size. A whole-volume total therefore reads somewhat higher than the
+container's real usage — about 4 % on this machine. `du` has the same blind spot. Snapshots
+are invisible too.
+
 ## Scope
 
 Included: scanning, both graphs, hover tooltip, drill-down with Previous/Next, search
@@ -107,10 +137,16 @@ layouts do not yet add a free-space cell for volume roots.
 
 ## Verification
 
-`swift test` covers the scanner against fixture trees (hard links, symlink loops,
-packages, unreadable directories, cancellation), layout invariants (children tile their
-parent with no overlap or gaps for all four strategies, angles sum correctly, merge
-behaviour), the measured hue mapping and start angle, and the Swift↔Metal struct layouts.
+`swift test` covers the scanner against fixture trees (hard links, symlink loops, packages,
+unreadable directories, cancellation), the firmlink defences (`VolumeMap` exclusions,
+directory claiming by inode, volume scopes nesting correctly), layout invariants (children
+tile their parent with no overlap or gaps for all four strategies, angles sum correctly,
+merge behaviour), the measured hue mapping and start angle, the tooltip and centre-label
+text — including that a merged group reports its own total rather than zero or its parent's
+— and the Swift↔Metal struct layouts.
+
+Cross-check a total against `du -sk <folder>` on a subtree with no firmlinks in it;
+`/Applications` and `~/Library` both agree byte-for-byte.
 
 Measured on an M-series Mac: `/Applications` (340 k nodes) scans in 0.6 s and `~/Library`
 (357 k nodes) in 1.1 s, both agreeing byte-for-byte with `du`. Worst-case layout — no

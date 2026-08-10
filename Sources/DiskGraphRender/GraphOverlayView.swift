@@ -30,11 +30,23 @@ final class GraphOverlayView: NSView {
         if let tooltip { draw(tooltip) }
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     private func drawCenterText() {
         guard !centerText.isEmpty else { return }
+        // The label lands on top of whatever cells are underneath it in the tree map, so a
+        // soft shadow in the opposite direction keeps it readable over any of them.
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.windowBackgroundColor.withAlphaComponent(0.85)
+        shadow.shadowBlurRadius = 6
+        shadow.shadowOffset = .zero
         let attributes: [NSAttributedString.Key: Any] = [
             .font: Self.centerFont,
             .foregroundColor: NSColor.labelColor,
+            .shadow: shadow,
         ]
         let string = NSAttributedString(string: centerText, attributes: attributes)
         let size = string.size()
@@ -63,10 +75,12 @@ final class GraphOverlayView: NSView {
         origin.y = min(max(4, origin.y), bounds.maxY - boxSize.height - 4)
         let box = CGRect(origin: origin, size: boxSize)
 
-        let path = NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4)
-        NSColor(calibratedWhite: 0.91, alpha: 0.97).setFill()
+        // Dynamic colours, so the chip inverts with the appearance. Fixed greys here meant
+        // white label text on a light chip in dark mode.
+        let path = NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5)
+        NSColor.controlBackgroundColor.withAlphaComponent(0.97).setFill()
         path.fill()
-        NSColor(calibratedWhite: 0.72, alpha: 1).setStroke()
+        NSColor.separatorColor.setStroke()
         path.lineWidth = 1
         path.stroke()
 

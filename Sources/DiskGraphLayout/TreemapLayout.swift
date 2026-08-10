@@ -92,6 +92,7 @@ public struct TreemapLayout {
             let minCellArea = minSide.x * minSide.y
             var visibleCount = 0
             var mergedSize: Int64 = 0
+            var mergedCount = 0
             for child in children {
                 let size = tree.size(of: child, mode: options.sizeMode)
                 guard size > 0 else { continue }
@@ -100,6 +101,7 @@ public struct TreemapLayout {
                     visibleCount += 1
                 } else {
                     mergedSize += size
+                    mergedCount += 1
                 }
             }
 
@@ -168,7 +170,9 @@ public struct TreemapLayout {
                     pieAlpha: 0,
                     rectAlpha: 1,
                     nodeID: frame.node,
-                    flags: [.merged, .inTreeMap]))
+                    flags: [.merged, .inTreeMap],
+                    mergedCount: mergedCount,
+                    mergedSize: mergedSize))
             }
         }
 

@@ -51,8 +51,19 @@ public struct CellInstance: Equatable {
     public var rectAlpha: Float
     public var nodeID: UInt32
     public var flags: UInt32
-    // No explicit tail padding: SIMD4<Float> forces 16-byte alignment, so the 52 bytes
-    // above round up to a 64-byte stride on both sides. `CellInstanceLayoutTests` pins it.
+
+    /// For a `.merged` cell, how many siblings it stands for. Zero otherwise.
+    ///
+    /// A merged cell has no node of its own — it borrows its parent's id as a dictionary
+    /// key — so its size cannot be looked up in the tree. It has to be carried here, or
+    /// the tooltip has nothing to report.
+    public var mergedCount: UInt32
+    /// For a `.merged` cell, the summed size of those siblings in the active size mode.
+    public var mergedSize: Int64
+
+    // These two are free: `SIMD4<Float>` forces 16-byte alignment, so the struct already
+    // occupied a 64-byte stride with bytes 52…63 dead. `CellInstanceLayoutTests` pins the
+    // offsets, which `Graph.metal` mirrors.
 
     public init(
         pie: SIMD4<Float> = .zero,
@@ -61,7 +72,9 @@ public struct CellInstance: Equatable {
         pieAlpha: Float = 0,
         rectAlpha: Float = 0,
         nodeID: NodeID = 0,
-        flags: CellFlags = []
+        flags: CellFlags = [],
+        mergedCount: Int = 0,
+        mergedSize: Int64 = 0
     ) {
         self.pie = pie
         self.rect = rect
@@ -70,6 +83,8 @@ public struct CellInstance: Equatable {
         self.rectAlpha = rectAlpha
         self.nodeID = UInt32(bitPattern: nodeID)
         self.flags = flags.rawValue
+        self.mergedCount = UInt32(clamping: mergedCount)
+        self.mergedSize = mergedSize
     }
 
     public var innerRadius: Float { pie.x }

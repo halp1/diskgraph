@@ -115,7 +115,19 @@ public final class GraphWindowController: NSWindowController {
 
     private func updateChrome() {
         guard let tree else {
-            window?.title = graphDocument.displayName ?? "DiskGraph"
+            // No tree yet, but the folder is already known — show it rather than an empty
+            // pill for however long the scan takes.
+            let name = graphDocument.fileURL?.lastPathComponent ?? "DiskGraph"
+            window?.title = name
+            if let pathButton, let url = graphDocument.fileURL {
+                let menu = NSMenu()
+                let item = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+                item.image = NSWorkspace.shared.icon(forFile: url.path)
+                item.image?.size = NSSize(width: 14, height: 14)
+                menu.addItem(item)
+                pathButton.menu = menu
+                pathButton.selectItem(at: 0)
+            }
             navigationControl?.setEnabled(false, forSegment: 0)
             navigationControl?.setEnabled(false, forSegment: 1)
             return

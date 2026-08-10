@@ -433,9 +433,10 @@ public final class GraphView: NSView {
         renderer.uniforms.highlightedCell = index.map(UInt32.init) ?? GraphUniforms.noHighlight
 
         if let hit {
-            let text = CellDescription.tooltip(for: hit, tree: tree, sizeMode: options.sizeMode)
+            let text = CellDescription.tooltip(
+                for: hit, tree: tree, root: root, sizeMode: options.sizeMode)
             overlay.tooltip = GraphOverlayView.Tooltip(
-                name: text.name, detail: text.detail, anchor: point)
+                path: text.path, name: text.name, detail: text.detail, anchor: point)
         } else {
             overlay.tooltip = nil
         }
